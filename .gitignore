@@ -1,0 +1,21 @@
+# Credenciais e configuração local
+.env
+.env.*
+config-local.php
+secrets.php
+
+# WordPress / PHP
+*.log
+wp-config.php
+
+# Sistemas operacionais
+.DS_Store
+Thumbs.db
+
+# Editores / IDEs
+.vscode/
+.idea/
+
+# Empacotamento
+*.zip
+*.tar.gz

@@ -102,19 +102,64 @@ function proxmox_dashboard_status_label( $status ) {
  */
 function proxmox_dashboard_get_options() {
 	$defaults = array(
-		'host'       => '',
-		'user'       => '',
-		'token_id'   => '',
-		'token_secret' => '',
+		'host'             => '',
+		'user'             => '',
+		'token_id'         => '',
+		'token_secret'     => '',
 		'refresh_interval' => 5,
-		'services'   => array(),
+
+		// Topologia & Servidor
+		'server_ip'        => '192.168.2.50',
+		'server_so'        => 'Proxmox VE 9.2.20',
+		'server_fn'        => 'Virtualização',
+		'server_mac'       => 'f0:4d:a2:e6:64:5e',
+		'server_url'       => 'proxmox.marcovivas.online',
+		'server_status'    => "AMBIENTE ESTÁVEL\ne CENTRALIZADO\nPARA TODOS\nOS SERVIÇOS",
+		'server_icon'      => '',
+		'router_ip'        => '192.168.2.1',
+		'router_label'     => 'ROTEADOR',
+		'switch_label'     => 'SWITCH',
+		'lan_network'      => '192.168.2.0/24',
+
+		// Containers (LXC) & VMs
+		'containers'       => array(),
+
+		// Serviços Docker
+		'docker_services'  => array(),
+
+		// Armazenamento
+		'storages_custom'  => array(),
+
+		// Legenda
+		'legend_items'     => array(
+			array( 'tag' => 'LXC',   'color' => 'lxc',    'label' => __( 'Linux Container', 'proxmox-dashboard' ) ),
+			array( 'tag' => 'IP',    'color' => 'ip',     'label' => __( 'Endereço IP na rede local', 'proxmox-dashboard' ) ),
+			array( 'tag' => 'URL',   'color' => 'url',    'label' => __( 'Acesso via domínio (externo)', 'proxmox-dashboard' ) ),
+			array( 'tag' => 'VM',    'color' => 'vm',     'label' => __( 'Máquina Virtual', 'proxmox-dashboard' ) ),
+			array( 'tag' => 'MAC',   'color' => 'mac',    'label' => __( 'Endereço MAC do Container', 'proxmox-dashboard' ) ),
+			array( 'tag' => 'Porta', 'color' => 'port',   'label' => __( 'Porta do serviço no host', 'proxmox-dashboard' ) ),
+		),
+
+		// Serviços monitorados manuais (compatibilidade)
+		'services'         => array(),
 	);
 
 	$options = get_option( 'proxmox_dashboard_settings', array() );
 
 	$parsed = wp_parse_args( $options, $defaults );
 
-	// Garante que services seja sempre array de arrays válidos.
+	if ( ! isset( $parsed['containers'] ) || ! is_array( $parsed['containers'] ) ) {
+		$parsed['containers'] = array();
+	}
+	if ( ! isset( $parsed['docker_services'] ) || ! is_array( $parsed['docker_services'] ) ) {
+		$parsed['docker_services'] = array();
+	}
+	if ( ! isset( $parsed['storages_custom'] ) || ! is_array( $parsed['storages_custom'] ) ) {
+		$parsed['storages_custom'] = array();
+	}
+	if ( ! isset( $parsed['legend_items'] ) || ! is_array( $parsed['legend_items'] ) ) {
+		$parsed['legend_items'] = $defaults['legend_items'];
+	}
 	if ( ! isset( $parsed['services'] ) || ! is_array( $parsed['services'] ) ) {
 		$parsed['services'] = array();
 	}
@@ -123,25 +168,91 @@ function proxmox_dashboard_get_options() {
 }
 
 /**
- * Retorna serviços cadastrados já sanitizados para exibição.
+ * Retorna serviços cadastrados já sanitizados para monitoramento e health-check.
+ * Agrega tanto serviços manuais quanto serviços Docker que possuem URL de checagem.
  *
  * @return array
  */
 function proxmox_dashboard_get_services() {
-	$options  = proxmox_dashboard_get_options();
-	$services = isset( $options['services'] ) && is_array( $options['services'] ) ? $options['services'] : array();
-	$out      = array();
-	foreach ( $services as $svc ) {
-		if ( empty( $svc['name'] ) || empty( $svc['url'] ) ) {
-			continue;
+	$options = proxmox_dashboard_get_options();
+	$out     = array();
+
+	// 1) Serviços manuais (legado)
+	if ( ! empty( $options['services'] ) && is_array( $options['services'] ) ) {
+		foreach ( $options['services'] as $svc ) {
+			if ( empty( $svc['name'] ) || empty( $svc['url'] ) ) {
+				continue;
+			}
+			$out[] = array(
+				'name' => sanitize_text_field( $svc['name'] ),
+				'url'  => esc_url_raw( $svc['url'] ),
+				'icon' => isset( $svc['icon'] ) ? sanitize_text_field( $svc['icon'] ) : '',
+			);
 		}
-		$out[] = array(
-			'name' => sanitize_text_field( $svc['name'] ),
-			'url'  => esc_url_raw( $svc['url'] ),
-			'icon' => isset( $svc['icon'] ) ? sanitize_text_field( $svc['icon'] ) : '',
-		);
 	}
+
+	// 2) Serviços Docker com checagem configurada
+	if ( ! empty( $options['docker_services'] ) && is_array( $options['docker_services'] ) ) {
+		foreach ( $options['docker_services'] as $ds ) {
+			$check_url = ! empty( $ds['check_url'] ) ? trim( $ds['check_url'] ) : '';
+			if ( empty( $check_url ) && ! empty( $ds['domain'] ) ) {
+				$check_url = $ds['domain'];
+			}
+			if ( empty( $check_url ) ) {
+				continue;
+			}
+			if ( ! preg_match( '#^https?://#i', $check_url ) ) {
+				$check_url = 'https://' . ltrim( $check_url, '/' );
+			}
+			$out[] = array(
+				'name' => ! empty( $ds['name'] ) ? sanitize_text_field( $ds['name'] ) : 'Docker',
+				'url'  => esc_url_raw( $check_url ),
+				'icon' => isset( $ds['icon'] ) ? sanitize_text_field( $ds['icon'] ) : '',
+			);
+		}
+	}
+
 	return $out;
+}
+
+/**
+ * Retorna lista de containers (LXC / VMs) cadastrados.
+ *
+ * @return array
+ */
+function proxmox_dashboard_get_containers() {
+	$options = proxmox_dashboard_get_options();
+	return ! empty( $options['containers'] ) && is_array( $options['containers'] ) ? $options['containers'] : array();
+}
+
+/**
+ * Retorna lista de serviços Docker cadastrados.
+ *
+ * @return array
+ */
+function proxmox_dashboard_get_docker_services() {
+	$options = proxmox_dashboard_get_options();
+	return ! empty( $options['docker_services'] ) && is_array( $options['docker_services'] ) ? $options['docker_services'] : array();
+}
+
+/**
+ * Retorna lista de storages/discos personalizados cadastrados.
+ *
+ * @return array
+ */
+function proxmox_dashboard_get_storages_custom() {
+	$options = proxmox_dashboard_get_options();
+	return ! empty( $options['storages_custom'] ) && is_array( $options['storages_custom'] ) ? $options['storages_custom'] : array();
+}
+
+/**
+ * Retorna lista de itens da legenda.
+ *
+ * @return array
+ */
+function proxmox_dashboard_get_legend_items() {
+	$options = proxmox_dashboard_get_options();
+	return ! empty( $options['legend_items'] ) && is_array( $options['legend_items'] ) ? $options['legend_items'] : array();
 }
 
 /**
@@ -152,10 +263,14 @@ function proxmox_dashboard_get_services() {
 function proxmox_dashboard_is_configured() {
 	$options = proxmox_dashboard_get_options();
 
+	$token_id = ! empty( $options['token_id'] ) ? trim( $options['token_id'] ) : '';
+	$user     = ! empty( $options['user'] ) ? trim( $options['user'] ) : '';
+
+	$has_token = ( strpos( $token_id, '!' ) !== false ) || ( ! empty( $token_id ) && ! empty( $user ) );
+
 	return (
 		! empty( $options['host'] ) &&
-		! empty( $options['user'] ) &&
-		! empty( $options['token_id'] ) &&
+		$has_token &&
 		! empty( $options['token_secret'] )
 	);
 }

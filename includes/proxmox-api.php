@@ -61,7 +61,18 @@ class Proxmox_API {
 	public function get( $path, $query = array() ) {
 		$options = $this->options;
 
-		if ( empty( $options['host'] ) || empty( $options['user'] ) || empty( $options['token_id'] ) || empty( $options['token_secret'] ) ) {
+		$token_id = ! empty( $options['token_id'] ) ? trim( $options['token_id'] ) : '';
+		$user     = ! empty( $options['user'] ) ? trim( $options['user'] ) : '';
+
+		if ( strpos( $token_id, '!' ) !== false ) {
+			$token_identifier = $token_id;
+		} elseif ( ! empty( $user ) && ! empty( $token_id ) ) {
+			$token_identifier = $user . '!' . $token_id;
+		} else {
+			$token_identifier = '';
+		}
+
+		if ( empty( $options['host'] ) || empty( $token_identifier ) || empty( $options['token_secret'] ) ) {
 			return new WP_Error( 'proxmox_not_configured', __( 'Tema do Proxmox não configurado.', 'proxmox-dashboard' ) );
 		}
 
@@ -77,8 +88,6 @@ class Proxmox_API {
 		if ( ! empty( $query ) ) {
 			$url = add_query_arg( $query, $url );
 		}
-
-		$token_identifier = $options['user'] . '!' . $options['token_id'];
 
 		$args = array(
 			'timeout'     => 15,

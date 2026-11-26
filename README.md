@@ -1,7 +1,5 @@
 # Proxmox VE Dashboard
 
-![Prévia do dashboard](screenshot.png)
-
 Tema WordPress que transforma a página inicial do seu site em um **mapa da infraestrutura homelab**, com dados estáticos gerenciados pelo WP-Admin e métricas lidas em tempo real da API oficial do **Proxmox VE**.
 
 **Versão:** 1.0.0 · **WordPress:** 6.0+ (testado até 6.8) · **PHP:** 7.4+

@@ -1,141 +1,109 @@
-# Proxmox Dashboard & Mapa da Infraestrutura (Homelab)
+# Proxmox VE Dashboard
 
-Tema WordPress que transforma seu site em um **Mapa de Infraestrutura Homelab** moderno, elegante e interativo, integrado em tempo real com a API oficial do **Proxmox VE**.
+![Prévia do dashboard](screenshot.png)
 
-Apresenta topologia de rede, nós de virtualização, containers LXC, máquinas virtuais, serviços Docker expostos com Cloudflare, discos de armazenamento físico e medidores ao vivo de CPU, RAM e Disco.
+Tema WordPress que transforma a página inicial do seu site em um **mapa da infraestrutura homelab**, com dados estáticos gerenciados pelo WP-Admin e métricas lidas em tempo real da API oficial do **Proxmox VE**.
 
-**Versão:** 2.4.0 · **Requer PHP:** 8.1+ · **Testado até:** WordPress 6.7
-
----
-
-## 📋 Índice
-
-1. [Funcionalidades](#-funcionalidades)
-2. [O que há de novo na v2.4.0](#-o-que-há-de-novo-na-v240)
-3. [Instalação](#-instalação)
-4. [Como Preencher e Gerenciar pelo Painel](#-como-preencher-e-gerenciar-pelo-painel)
-5. [Criando o Token no Proxmox (3 Opções)](#-criando-o-token-no-proxmox-3-opções)
-6. [Estrutura de Arquivos](#-estrutura-de-arquivos)
-7. [Licença](#-licença)
+**Versão:** 1.0.0 · **WordPress:** 6.0+ (testado até 6.8) · **PHP:** 7.4+
 
 ---
 
-## ✅ Funcionalidades
+## Funcionalidades
 
-- **Identidade Visual Homelab & Proxmox:** Layout limpo e moderno com gradientes sutis, tipografia Inter e marca estilizada do Proxmox.
-- **Topologia de Rede:** Diagrama visual do fluxo de rede: `INTERNET ➔ ROTEADOR ➔ SWITCH ➔ REDE LAN`.
-- **Cartão do Servidor:** Exibe IP, SO, Função, MAC e URL externa com status de ambiente.
-- **Métricas Globais em Tempo Real:** Gauges dinâmicos de CPU (pico do cluster), Memória RAM consumida e Disco total direto da API Proxmox.
-- **Containers (LXC) & VMs com Status Live:** Cards com ID badge, logos/imagens personalizados, IP local, endereço MAC, domínio Cloudflare, função/descrição e **pulso de status ao vivo** (online/offline) conectado à API do Proxmox pelo VMID.
-- **Serviços Docker:** Grid de serviços com portas, domínios externos e **health-check HTTP server-side em tempo real** (latência em ms e status online/offline).
-- **Armazenamento & Legenda:** Mapeamento visual de discos físicos (SSD, HDD, NVMe) e legenda com tags coloridas (`LXC`, `IP`, `URL`, `VM`, `MAC`, `Porta`).
-- **Backup & Migração (Importação/Exportação):** Exporte e importe todas as configurações e cadastros em arquivo JSON com 1 clique.
-- **Upload de Imagens Nativo:** Botão "Selecionar Imagem" com integração direta à Biblioteca de Mídia do WordPress (`wp.media`) para subir SVGs, PNGs e ícones facilmente.
-- **Clique para Copiar:** Clique em qualquer card de container ou serviço para copiar dados diretamente com feedback visual e toast.
-- **Alternador de Visualização:** Alterne entre o **Mapa da Infraestrutura** e as **Métricas & Tabelas Técnicas** com 1 clique.
-- **Modo TV (Kiosk) & Tela Cheia:** Ideal para tablets na mesa ou monitores de parede 24/7.
-- **Relógio em Tempo Real:** Relógio digital preciso no rodapé.
+- **Mapa da infraestrutura:** topologia visual `INTERNET → ROTEADOR → SWITCH → REDE LAN`, com rótulos e IPs editáveis no painel.
+- **Cartão do servidor:** IP, sistema operacional, função, MAC, URL e mensagens de status, com logotipo personalizado (aceita SVG e PNG).
+- **Containers LXC e serviços Docker:** cards configuráveis com ícone, IP, MAC, domínio, porta e função. Clique em um card para copiar suas informações.
+- **Métricas globais via API:** CPU (média do cluster), RAM, armazenamento, quantidade de nodes/storages e uptime.
+- **Armazenamento:** cards lidos automaticamente do Proxmox ou uma lista personalizada definida no painel.
+- **Tabelas de monitoramento:** nodes, máquinas virtuais (QEMU), containers (LXC) e storages, com barras de uso e badges de status.
+- **Atualização automática:** intervalo configurável em segundos (`0` desativa o auto-refresh) e relógio em tempo real no rodapé.
+- **Painel administrativo completo:** 4 abas para conexão, personalização, conteúdo e backup, com botão de teste de conectividade.
+- **Importar/exportar:** backup de todas as configurações em JSON, com opções para incluir o Token Secret e preservar as credenciais locais na restauração.
+- **Responsivo:** layout adaptado para desktop, tablet e celular.
 
----
+## Instalação
 
-## 🚀 O que há de novo na v2.4.0
-
-1. **Importação e Exportação de Configurações (Backup Completo):** Nova aba dedicada que permite baixar um arquivo JSON com todas as configurações do dashboard (topologia, containers LXC, VMs, serviços Docker, discos e legenda) e restaurá-las com 1 clique.
-2. **Proteção e Preservação de Credenciais:** Opção para incluir ou omitir o token secret no arquivo exportado e opção de preservar as credenciais Proxmox locais durante a restauração.
-3. **Importação Flexível:** Suporta envio de arquivo `.json` ou colagem direta do código JSON no painel.
-4. **Tema "Zerado" e 100% Gerenciável:** Todas as informações do servidor, topologia, containers, serviços docker, discos e legenda podem ser preenchidas, editadas ou excluídas pelo WP-Admin.
-
----
-
-## 🛠️ Instalação
-
-1. Copie a pasta `proxmox-theme` para `wp-content/themes/` da sua instalação WordPress (ou compacte em `.zip` e envie via **Aparência → Temas → Adicionar Novo → Enviar tema**).
+1. Copie a pasta `proxmox-theme` para `wp-content/themes/` da sua instalação WordPress.  
+   Também é possível compactar a pasta em `.zip` e enviar em **Aparência → Temas → Adicionar novo → Enviar tema**.
 2. Ative o tema em **Aparência → Temas**.
-3. Acesse **Proxmox Dashboard → Configurações** no menu lateral do WordPress.
-4. Preencha a conexão e adicione seus containers e serviços.
-5. Acesse a página inicial do seu site.
+3. Acesse **Proxmox VE** no menu lateral do WP-Admin e configure a conexão com a API.
+4. Defina a página inicial do site (a renderização do dashboard usa `front-page.php`).
+5. Visite a home do site para ver o dashboard.
 
----
+## Configurando a API do Proxmox
 
-## ⚙️ Como Preencher e Gerenciar pelo Painel
+1. No painel do Proxmox VE, vá em **Datacenter → Access → API Tokens** e clique em **Add**.
+2. Selecione o usuário (por exemplo, `root@pam` ou um usuário exclusivo `dashboard@pve`) e defina um **Token ID** (por exemplo, `api`).
+3. Para dar ao token apenas permissões de leitura, use um usuário com uma role somente-leitura, como `PVEAuditor`, com acesso a `/nodes`, `/cluster/resources` e `/version`. Se o token precisar herdar as permissões do usuário, deixe **Privilege Separation** desativado.
+4. Copie os valores gerados:
+   - **Token ID/identifier:** `usuario@realm!tokenid` (ex.: `dashboard@pve!api`)
+   - **Token Secret:** o valor exibido uma única vez na criação
+5. No WordPress, em **Proxmox VE → Conexão API**, preencha:
+   - **URL da API Proxmox:** `https://192.168.2.50:8006` (ou o domínio do seu Proxmox)
+   - **Token ID** e **Token Secret**
+   - **Intervalo de atualização** em segundos (`0` desativa)
+   - **Verificar SSL:** desmarque se o Proxmox usar certificado self-signed
+6. Clique em **Testar conexão com API** e salve as configurações.
 
-Acesse **Proxmox Dashboard → Configurações** no menu do WordPress. O painel é dividido em 6 abas:
+O Token Secret fica salvo apenas no banco do WordPress e **não é enviado para o navegador**; o frontend consome os endpoints REST do próprio WordPress.
 
-### 1. 🔑 Conexão Proxmox
-- **Proxmox Host:** Ex.: `https://proxmox.marcovivas.online` ou `https://192.168.2.50:8006`
-- **Token ID:** Ex.: `root@pam!api` ou `dashboard@pve!api`
-- **API Token Secret:** Ex.: `e7911894-268d-4624-a6df-686d0a504be8`
-- **Intervalo de Atualização:** 1s, 5s, 10s, 30s, 1 min, ou personalizado.
-- **Testar Conexão:** Botão para testar a comunicação imediata com o Proxmox.
+## Painel administrativo
 
-### 2. 🖥️ Topologia & Servidor
-- **Dados do Servidor:** IP Local (`192.168.2.50`), SO (`Proxmox VE 9.2.20`), Função (`Virtualização`), MAC (`f0:4d:a2:e6:64:5e`), URL (`proxmox.marcovivas.online`), Mensagem de status e upload do Logo/Ícone.
-- **Diagrama de Rede:** IP do Roteador/Gateway (`192.168.2.1`), Rótulo do Switch e Sub-rede LAN (`192.168.2.0/24`).
+O menu **Proxmox VE** possui quatro abas:
 
-### 3. 📦 Containers (LXC) & VMs
-- Clique em **Adicionar Container / VM** para criar quantos desejar.
-- **Tipo:** LXC ou VM (QEMU).
-- **ID (VMID):** Número do container no Proxmox (ex.: `100`). *Se coincidir com o Proxmox, o tema conecta o status online/offline e medidor de RAM automaticamente!*
-- **Ícone / Imagem:** Clique em `📁` para escolher qualquer imagem ou SVG da biblioteca do WordPress.
-- **IP Local, MAC Address, URL e Função/Descrição.**
-- Botão **Excluir** para remover qualquer card a qualquer momento.
+| Aba | O que configura |
+| --- | --- |
+| **Conexão API** | URL do Proxmox, Token ID, Token Secret, intervalo de refresh, verificação de SSL e teste de conectividade. |
+| **Personalização** | Nome/título/subtítulo da marca, texto do rodapé, ícone e dados do servidor, rótulos do roteador/switch e rede LAN. |
+| **Conteúdo** | Listas repetíveis de containers LXC, serviços Docker e armazenamento personalizado (opcional). |
+| **Importar/Exportar** | Download e restauração das configurações em JSON, com controle sobre credenciais exportadas e preservadas. |
 
-### 4. 🐳 Serviços Docker
-- Clique em **Adicionar Serviço Docker** para registrar os serviços (ex.: Portainer, Gitea, Jellyfin).
-- **Nome, Ícone/Imagem, Porta no Host** (ex.: `9443`), **Domínio Externo** (ex.: `portainer.marcovivas.online`).
-- **URL de Health-Check:** (Opcional) URL para ping HTTP automático com medição de latência em milissegundos e status Online/Offline.
+Na aba **Conteúdo**, os ícones aceitam URLs de imagem/SVG, e o botão **Selecionar** abre a biblioteca de mídia do WordPress. O envio de arquivos SVG está habilitado pelo tema.
 
-### 5. 💾 Armazenamento & Legenda
-- **Discos de Armazenamento:** Adicione, edite ou exclua unidades (SSD, HDD, NVMe) com título e lista de alocações.
-- **Itens da Legenda:** Adicione ou edite tags personalizadas (`LXC`, `IP`, `URL`, `VM`, `MAC`, `Porta`) com cores e descrições.
+## Endpoints REST
 
-### 6. 🔄 Importar / Exportar (Backup & Migração)
-- **Exportar Configurações:** Baixe um arquivo `.json` completo com todas as definições da infraestrutura para backup ou migração para outro servidor. Inclui opção de exportar com ou sem o Secret da API.
-- **Importar Configurações:** Restaure seu dashboard enviando o arquivo `.json` ou colando o texto JSON diretamente. Inclui opção de preservar as credenciais de conexão do Proxmox local.
+O tema registra endpoints somente de leitura sob o namespace `pvd/v1`:
 
----
+| Método | Endpoint | Retorno |
+| --- | --- | --- |
+| `GET` | `/wp-json/pvd/v1/status` | Versão, nodes, storages, CPU/RAM/disco e uptime |
+| `GET` | `/wp-json/pvd/v1/nodes` | Nodes do cluster |
+| `GET` | `/wp-json/pvd/v1/resources` | VMs (QEMU) e LXC do cluster |
+| `GET` | `/wp-json/pvd/v1/vms` | Máquinas virtuais QEMU |
+| `GET` | `/wp-json/pvd/v1/lxc` | Containers LXC |
+| `GET` | `/wp-json/pvd/v1/storage` | Storages com uso, livre e total |
 
-## 🔑 Criando o Token no Proxmox (3 Opções)
+> **Atenção:** esses endpoints são públicos (`permission_callback` aberto), pois o dashboard pode ser exibido sem login. Não publique o site sem proteção de acesso se os dados da sua infraestrutura precisam ser privados. O token do Proxmox nunca aparece nas respostas.
 
-1. No painel do Proxmox VE, acesse **Datacenter → Access → API Tokens**.
-2. Clique em **Add**.
-3. Selecione o **User** (ex.: `root@pam` ou crie um usuário `dashboard@pve`), defina o **Token ID** (ex.: `api`) e **desmarque** a opção `Privilege Separation` (deixe **OFF**).
-4. Na janela que surgir ("Token Secret"), você verá:
-   - **Token ID:** `root@pam!api`
-   - **Secret:** `e7911894-268d-4624-a6df-686d0a504be8`
-5. Cole exatamente esses dados no WordPress junto com o seu **Host**.
+Sem a API configurada, o dashboard exibe um aviso e mantém apenas os cards e textos definidos no painel.
 
----
+## Estrutura de arquivos
 
-## 📁 Estrutura de Arquivos
-
-```
+```text
 proxmox-theme/
 ├── assets/
 │   ├── css/
-│   │   └── dashboard.css   # Estilos reformulados unificando proxmox_html
+│   │   ├── admin.css        # Estilos do painel administrativo
+│   │   └── dashboard.css    # Estilos do dashboard
 │   └── js/
-│       └── dashboard.js    # Lógica reativa, relógio, clipboard e polling
-├── img/
-│   ├── Proxmox-Logo.png
-│   └── Proxmox-Logo.svg
+│       ├── admin.js         # Repeater fields e seletor de mídia
+│       └── dashboard.js     # Renderização, polling, relógio e clipboard
+├── img/                     # Ícones SVG dos serviços e do Proxmox
 ├── includes/
-│   ├── helpers.php         # Getters, normalização e defaults
-│   ├── proxmox-api.php     # Cliente REST oficial do Proxmox VE
-│   ├── rest-api.php        # Endpoints REST e health-check do WordPress
-│   └── settings.php        # Painel administrativo com abas e upload de mídia
+│   ├── helpers.php          # Opções padrão, sanitização e getters
+│   ├── proxmox-api.php      # Cliente da API REST do Proxmox VE
+│   ├── rest-api.php         # Endpoints REST do WordPress
+│   └── settings.php         # Menu, abas e importação/exportação
 ├── footer.php
-├── front-page.php          # Visual frontal completo do Homelab
-├── functions.php           # Enqueue de fontes, scripts e wp.media
+├── front-page.php           # Template do dashboard
+├── functions.php            # Bootstrap do tema e enqueue de assets
 ├── header.php
 ├── index.php
-├── LICENSE
-├── README.md
-└── style.css
+├── screenshot.png
+├── style.css                # Cabeçalho do tema
+└── README.md
 ```
 
----
+## Licença
 
-## 📄 Licença
-
-Distribuído sob licença GNU General Public License v2 ou superior.
+Distribuído sob a licença MIT.

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <!-- Rack unit 1 -->
+  <rect x="8" y="10" width="48" height="18" rx="4" fill="#f0f9ff" stroke="#0284c7" stroke-width="2.5"/>
+  <circle cx="17" cy="19" r="2.5" fill="#0284c7"/>
+  <circle cx="25" cy="19" r="2" fill="#38bdf8"/>
+  <line x1="34" y1="19" x2="48" y2="19" stroke="#0284c7" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Rack unit 2: Reserved slot -->
+  <rect x="8" y="36" width="48" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8" stroke-width="2.5" stroke-dasharray="4 3"/>
+  <circle cx="17" cy="45" r="2.5" fill="#94a3b8"/>
+  <line x1="28" y1="45" x2="48" y2="45" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="3 3"/>
+</svg>

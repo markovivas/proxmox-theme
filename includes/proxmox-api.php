@@ -1,42 +1,19 @@
 <?php
 /**
- * Cliente para a API REST do Proxmox VE.
+ * Proxmox VE API client.
  *
- * @package Proxmox_Dashboard
- * @since   1.0.0
+ * @package Proxmox_VE_Dashboard
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/**
- * Classe Proxmox_API - responsável por toda a comunicação com o Proxmox VE.
- *
- * Utiliza exclusivamente a API REST oficial do Proxmox, autenticando por meio
- * de um API Token. O secret do token nunca é exposto ao navegador.
- */
-class Proxmox_API {
+class PVD_Proxmox_API {
 
-	/**
-	 * Instância única (singleton).
-	 *
-	 * @var Proxmox_API|null
-	 */
 	private static $instance = null;
-
-	/**
-	 * Opções de configuração do tema.
-	 *
-	 * @var array
-	 */
 	private $options;
 
-	/**
-	 * Retorna a instância única do cliente.
-	 *
-	 * @return Proxmox_API
-	 */
 	public static function instance() {
 		if ( null === self::$instance ) {
 			self::$instance = new self();
@@ -44,413 +21,220 @@ class Proxmox_API {
 		return self::$instance;
 	}
 
-	/**
-	 * Construtor.
-	 */
 	private function __construct() {
-		$this->options = proxmox_dashboard_get_options();
+		$this->options = pvd_get_options();
 	}
 
-	/**
-	 * Realiza uma requisição GET à API do Proxmox.
-	 *
-	 * @param string $path Caminho do endpoint (ex.: /api2/json/version).
-	 * @param array  $query Parâmetros de consulta.
-	 * @return WP_Error|array Resposta decodificada (array) ou WP_Error.
-	 */
+	public function refresh_options() {
+		$this->options = pvd_get_options();
+	}
+
+	private function token_identifier() {
+		$token_id = trim( (string) ( $this->options['token_id'] ?? '' ) );
+		$user     = trim( (string) ( $this->options['user'] ?? '' ) );
+		if ( false !== strpos( $token_id, '!' ) ) {
+			return $token_id;
+		}
+		if ( '' !== $user && '' !== $token_id ) {
+			return $user . '!' . $token_id;
+		}
+		return '';
+	}
+
 	public function get( $path, $query = array() ) {
-		$options = $this->options;
+		$this->refresh_options();
+		$host   = untrailingslashit( trim( (string) ( $this->options['host'] ?? '' ) ) );
+		$token  = $this->token_identifier();
+		$secret = (string) ( $this->options['token_secret'] ?? '' );
 
-		$token_id = ! empty( $options['token_id'] ) ? trim( $options['token_id'] ) : '';
-		$user     = ! empty( $options['user'] ) ? trim( $options['user'] ) : '';
-
-		if ( strpos( $token_id, '!' ) !== false ) {
-			$token_identifier = $token_id;
-		} elseif ( ! empty( $user ) && ! empty( $token_id ) ) {
-			$token_identifier = $user . '!' . $token_id;
-		} else {
-			$token_identifier = '';
+		if ( '' === $host || '' === $token || '' === $secret ) {
+			return new WP_Error( 'pvd_not_configured', __( 'API do Proxmox não configurada.', 'proxmox-ve-dashboard' ) );
+		}
+		if ( '' === $path ) {
+			return new WP_Error( 'pvd_empty_path', __( 'Caminho da API vazio.', 'proxmox-ve-dashboard' ) );
 		}
 
-		if ( empty( $options['host'] ) || empty( $token_identifier ) || empty( $options['token_secret'] ) ) {
-			return new WP_Error( 'proxmox_not_configured', __( 'Tema do Proxmox não configurado.', 'proxmox-dashboard' ) );
-		}
-
-		$host = untrailingslashit( $options['host'] );
-
-		if ( empty( $path ) ) {
-			return new WP_Error( 'proxmox_empty_path', __( 'Caminho da API vazio.', 'proxmox-dashboard' ) );
-		}
-
-		$path = '/' . ltrim( $path, '/' );
-		$url  = $host . $path;
-
+		$url = $host . '/' . ltrim( $path, '/' );
 		if ( ! empty( $query ) ) {
 			$url = add_query_arg( $query, $url );
 		}
 
-		$args = array(
-			'timeout'     => 15,
-			'redirection' => 5,
-			'headers'     => array(
-				'Authorization' => 'PVEAPIToken=' . $token_identifier . '=' . $options['token_secret'],
-				'Accept'        => 'application/json',
-			),
-			'sslverify'   => apply_filters( 'proxmox_dashboard_sslverify', true ),
+		$response = wp_remote_get(
+			$url,
+			array(
+				'timeout'   => 15,
+				'headers'   => array(
+					'Authorization' => 'PVEAPIToken=' . $token . '=' . $secret,
+					'Accept'        => 'application/json',
+				),
+				'sslverify' => (bool) apply_filters( 'pvd_sslverify', ! empty( $this->options['sslverify'] ) ),
+			)
 		);
-
-		$response = wp_remote_get( $url, $args );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
-		$status_code = wp_remote_retrieve_response_code( $response );
-
-		if ( 200 !== $status_code ) {
-			$body = wp_remote_retrieve_body( $response );
-			$data = json_decode( $body, true );
-
-			$message = ( is_array( $data ) && isset( $data['errors'] ) )
-				? wp_json_encode( $data['errors'] )
-				: sprintf( __( 'Proxmox retornou o código HTTP %d.', 'proxmox-dashboard' ), $status_code );
-
-			return new WP_Error( 'proxmox_http_' . $status_code, $message );
-		}
-
+		$code = (int) wp_remote_retrieve_response_code( $response );
 		$body = wp_remote_retrieve_body( $response );
 		$data = json_decode( $body, true );
 
-		if ( null === $data ) {
-			return new WP_Error( 'proxmox_invalid_json', __( 'Resposta inválida do Proxmox.', 'proxmox-dashboard' ) );
+		if ( $code < 200 || $code >= 300 ) {
+			$msg = is_array( $data ) && isset( $data['errors'] ) ? wp_json_encode( $data['errors'] ) : sprintf( __( 'Proxmox retornou HTTP %d.', 'proxmox-ve-dashboard' ), $code );
+			return new WP_Error( 'pvd_http_' . $code, $msg, array( 'status' => $code ) );
 		}
 
+		if ( null === $data ) {
+			return new WP_Error( 'pvd_invalid_json', __( 'Resposta inválida do Proxmox.', 'proxmox-ve-dashboard' ) );
+		}
 		return $data;
 	}
 
-	/**
-	 * Testa a conexão e autenticação com o Proxmox.
-	 *
-	 * O endpoint /version é público, então não é suficiente para validar o
-	 * token. Aqui consultamos /cluster/resources, que exige autenticação e é o
-	 * mesmo endpoint usado pelo dashboard — assim o teste reflete a realidade
-	 * da consulta e evita um falso "Proxmox conectado".
-	 *
-	 * @return true|WP_Error
-	 */
 	public function test_connection() {
-		// Valida autenticação com um endpoint que exige token válido.
-		$response = $this->get( '/api2/json/cluster/resources' );
-
-		if ( is_wp_error( $response ) ) {
-			$code = $response->get_error_code();
-
-			if ( 'proxmox_http_401' === $code ) {
-				return new WP_Error(
-					'proxmox_auth_invalid',
-					__( 'Token da API inválido ou usuário/senha incorretos (401).', 'proxmox-dashboard' )
-				);
-			}
-
-			if ( 'proxmox_http_403' === $code ) {
-				return new WP_Error(
-					'proxmox_permission_denied',
-					__( 'Permissão insuficiente para consultar os dados (403). Verifique a role do usuário/token.', 'proxmox-dashboard' )
-				);
-			}
-
-			if ( 'proxmox_not_configured' === $code ) {
-				return $response;
-			}
-
-			// Demais erros: rede, SSL, etc.
-			return $response;
+		$res = $this->get( '/api2/json/version' );
+		if ( is_wp_error( $res ) ) {
+			return $res;
 		}
-
-		// Confirma que o Proxmox respondeu com dados de recurso.
-		if ( ! isset( $response['data'] ) ) {
-			return new WP_Error( 'proxmox_invalid_response', __( 'Resposta inesperada do Proxmox.', 'proxmox-dashboard' ) );
+		$nodes = $this->get( '/api2/json/nodes' );
+		if ( is_wp_error( $nodes ) ) {
+			return $nodes;
 		}
-
 		return true;
 	}
 
-	/**
-	 * Retorna a versão do Proxmox.
-	 *
-	 * @return mixed|null
-	 */
-	public function get_version() {
-		$response = $this->get( '/api2/json/version' );
-
-		if ( is_wp_error( $response ) ) {
-			return null;
-		}
-
-		return isset( $response['data'] ) ? $response['data'] : null;
-	}
-
-	/**
-	 * Retorna a estrutura do cluster / datacenter (nodes + storage).
-	 *
-	 * @return array
-	 */
-	public function get_cluster() {
-		$result = array(
-			'nodes'   => array(),
-			'storage' => array(),
-		);
-
-		$response = $this->get( '/api2/json/cluster/resources' );
-
-		if ( is_wp_error( $response ) ) {
-			return $result;
-		}
-
-		$resources = isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array();
-
-		foreach ( $resources as $resource ) {
-			if ( ! isset( $resource['type'] ) ) {
-				continue;
-			}
-
-			switch ( $resource['type'] ) {
-				case 'node':
-					$result['nodes'][] = $resource;
-					break;
-				case 'storage':
-					$result['storage'][] = $resource;
-					break;
-			}
-		}
-
-		return $result;
-	}
-
-	/**
-	 * Retorna o resumo de status do dashboard (agrega informações principais).
-	 *
-	 * @return WP_Error|array
-	 */
 	public function get_status() {
-		$version = $this->get_version();
-		$cluster = $this->get_cluster();
+		$version = $this->get( '/api2/json/version' );
+		$nodes   = $this->get_nodes();
+		$storage = $this->get_storage();
 
-		if ( is_wp_error( $cluster ) ) {
-			return $cluster;
+		if ( is_wp_error( $nodes ) ) {
+			return $nodes;
+		}
+		if ( is_wp_error( $storage ) ) {
+			$storage = array();
 		}
 
-		$nodes   = isset( $cluster['nodes'] ) ? $cluster['nodes'] : array();
-		$storage = isset( $cluster['storage'] ) ? $cluster['storage'] : array();
+		$cpu_total = 0.0;
+		$ram_used  = 0;
+		$ram_total = 0;
+		$disk_used = 0;
+		$disk_total = 0;
+		$uptime_max = 0;
 
-		$total_cpu = 0.0;
-		$total_ram = 0;
-		$total_disk = 0;
-		$used_ram   = 0;
-		$used_disk  = 0;
-
-		foreach ( $nodes as $node ) {
-			$total_cpu += isset( $node['cpu'] ) ? (float) $node['cpu'] : 0.0;
-
-			if ( isset( $node['maxmem'] ) ) {
-				$total_ram += (int) $node['maxmem'];
-			}
-			if ( isset( $node['mem'] ) ) {
-				$used_ram += (int) $node['mem'];
-			}
-			if ( isset( $node['maxdisk'] ) ) {
-				$total_disk += (int) $node['maxdisk'];
-			}
-			if ( isset( $node['disk'] ) ) {
-				$used_disk += (int) $node['disk'];
-			}
+		foreach ( $nodes as $n ) {
+			$cpu_total  += (float) ( $n['cpu'] ?? 0 );
+			$ram_used   += (int) ( $n['mem'] ?? 0 );
+			$ram_total  += (int) ( $n['maxmem'] ?? 0 );
+			$disk_used  += (int) ( $n['disk'] ?? 0 );
+			$disk_total += (int) ( $n['maxdisk'] ?? 0 );
+			$uptime_max  = max( $uptime_max, (int) ( $n['uptime'] ?? 0 ) );
 		}
+
+		$node_count = count( $nodes );
+		$cpu_avg    = $node_count > 0 ? $cpu_total / $node_count : 0;
 
 		return array(
-			'version'    => isset( $version['version'] ) ? $version['version'] : '--',
-			'release'    => isset( $version['release'] ) ? $version['release'] : '',
-			'nodeCount'  => count( $nodes ),
-			'storageCount' => count( $storage ),
-			'cpuTotal'   => $total_cpu,
-			'ramTotal'   => $total_ram,
-			'ramUsed'    => $used_ram,
-			'diskTotal'  => $total_disk,
-			'diskUsed'   => $used_disk,
+			'version'      => is_array( $version ) ? ( $version['data']['version'] ?? '--' ) : '--',
+			'release'      => is_array( $version ) ? ( $version['data']['release'] ?? '' ) : '',
+			'nodeCount'    => $node_count,
+			'storageCount' => is_array( $storage ) ? count( $storage ) : 0,
+			'cpuTotal'     => $cpu_avg, // 0-1
+			'ramUsed'      => $ram_used,
+			'ramTotal'     => $ram_total,
+			'diskUsed'     => $disk_used,
+			'diskTotal'    => $disk_total,
+			'uptime'       => $uptime_max,
 		);
 	}
 
-	/**
-	 * Retorna a lista de nodes.
-	 *
-	 * @return WP_Error|array
-	 */
 	public function get_nodes() {
-		$response = $this->get( '/api2/json/nodes' );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
+		$res = $this->get( '/api2/json/nodes' );
+		if ( is_wp_error( $res ) ) {
+			return $res;
 		}
-
-		$nodes = isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array();
-		$result = array();
-
-		foreach ( $nodes as $node ) {
-			$entry = array(
-				'node'    => isset( $node['node'] ) ? $node['node'] : '--',
-				'status'  => isset( $node['status'] ) ? $node['status'] : 'unknown',
-				'cpu'     => isset( $node['cpu'] ) ? round( (float) $node['cpu'] * 100, 1 ) : 0,
-				'mem'     => isset( $node['mem'] ) ? (int) $node['mem'] : 0,
-				'maxmem'  => isset( $node['maxmem'] ) ? (int) $node['maxmem'] : 0,
-				'disk'    => isset( $node['disk'] ) ? (int) $node['disk'] : 0,
-				'maxdisk' => isset( $node['maxdisk'] ) ? (int) $node['maxdisk'] : 0,
-				'uptime'  => isset( $node['uptime'] ) ? (int) $node['uptime'] : 0,
-				'version' => isset( $node['version'] ) ? $node['version'] : '',
+		$nodes = is_array( $res['data'] ?? null ) ? $res['data'] : array();
+		$out   = array();
+		foreach ( $nodes as $n ) {
+			$out[] = array(
+				'node'    => $n['node'] ?? '--',
+				'status'  => $n['status'] ?? 'unknown',
+				'cpu'     => round( (float) ( $n['cpu'] ?? 0 ) * 100, 1 ),
+				'mem'     => (int) ( $n['mem'] ?? 0 ),
+				'maxmem'  => (int) ( $n['maxmem'] ?? 0 ),
+				'disk'    => (int) ( $n['disk'] ?? 0 ),
+				'maxdisk' => (int) ( $n['maxdisk'] ?? 0 ),
+				'uptime'  => (int) ( $n['uptime'] ?? 0 ),
 			);
-
-			$result[] = $entry;
 		}
-
-		// Enriquecer com rótulos/uptime e informações por node quando disponíveis.
-		$result = $this->enrich_nodes( $result );
-
-		return $result;
+		return $out;
 	}
 
-	/**
-	 * Enriquece os nodes com informações adicionais (uptime, nível de load, etc).
-	 *
-	 * @param array $nodes Lista de nodes.
-	 * @return array
-	 */
-	private function enrich_nodes( array $nodes ) {
-		return $nodes;
-	}
-
-	/**
-	 * Retorna a lista de VMs e containers (recursos).
-	 *
-	 * @return WP_Error|array
-	 */
 	public function get_resources() {
-		$response = $this->get( '/api2/json/cluster/resources' );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
+		$res = $this->get( '/api2/json/cluster/resources' );
+		if ( is_wp_error( $res ) ) {
+			return $res;
 		}
-
-		$resources = isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array();
-
-		$vms = array();
-		$lxc = array();
-
-		foreach ( $resources as $resource ) {
-			if ( ! isset( $resource['type'] ) ) {
-				continue;
-			}
-
-			if ( 'qemu' === $resource['type'] ) {
-				$vms[] = $this->normalize_vm( $resource );
-			} elseif ( 'lxc' === $resource['type'] ) {
-				$lxc[] = $this->normalize_lxc( $resource );
+		$rows = is_array( $res['data'] ?? null ) ? $res['data'] : array();
+		$vms  = array();
+		$lxc  = array();
+		foreach ( $rows as $r ) {
+			$type = $r['type'] ?? '';
+			if ( 'qemu' === $type ) {
+				$vms[] = $this->normalize_vm( $r );
+			} elseif ( 'lxc' === $type ) {
+				$lxc[] = $this->normalize_lxc( $r );
 			}
 		}
+		return array( 'vms' => $vms, 'lxc' => $lxc );
+	}
 
+	private function normalize_vm( $r ) {
 		return array(
-			'vms' => $vms,
-			'lxc' => $lxc,
-		);
-	}
-
-	/**
-	 * Retorna apenas as VMs.
-	 *
-	 * @return WP_Error|array
-	 */
-	public function get_vms() {
-		$resources = $this->get_resources();
-
-		if ( is_wp_error( $resources ) ) {
-			return $resources;
-		}
-
-		return $resources['vms'];
-	}
-
-	/**
-	 * Retorna apenas os containers LXC.
-	 *
-	 * @return WP_Error|array
-	 */
-	public function get_lxc() {
-		$resources = $this->get_resources();
-
-		if ( is_wp_error( $resources ) ) {
-			return $resources;
-		}
-
-		return $resources['lxc'];
-	}
-
-	/**
-	 * Normaliza uma VM (qemu) para o formato do dashboard.
-	 *
-	 * @param array $resource Recurso bruto do Proxmox.
-	 * @return array
-	 */
-	private function normalize_vm( array $resource ) {
-		return array(
-			'vmid'    => isset( $resource['vmid'] ) ? (int) $resource['vmid'] : 0,
-			'name'    => isset( $resource['name'] ) ? $resource['name'] : '--',
-			'node'    => isset( $resource['node'] ) ? $resource['node'] : '--',
-			'status'  => isset( $resource['status'] ) ? $resource['status'] : 'unknown',
-			'cpu'     => isset( $resource['cpu'] ) ? round( (float) $resource['cpu'] * 100, 1 ) : 0,
-			'mem'     => isset( $resource['mem'] ) ? (int) $resource['mem'] : 0,
-			'maxmem'  => isset( $resource['maxmem'] ) ? (int) $resource['maxmem'] : 0,
-			'disk'    => isset( $resource['disk'] ) ? (int) $resource['disk'] : 0,
-			'maxdisk' => isset( $resource['maxdisk'] ) ? (int) $resource['maxdisk'] : 0,
-			'uptime'  => isset( $resource['uptime'] ) ? (int) $resource['uptime'] : 0,
+			'vmid'    => (int) ( $r['vmid'] ?? 0 ),
+			'name'    => $r['name'] ?? '--',
+			'node'    => $r['node'] ?? '--',
+			'status'  => $r['status'] ?? 'unknown',
+			'cpu'     => round( (float) ( $r['cpu'] ?? 0 ) * 100, 1 ),
+			'mem'     => (int) ( $r['mem'] ?? 0 ),
+			'maxmem'  => (int) ( $r['maxmem'] ?? 0 ),
+			'disk'    => (int) ( $r['disk'] ?? 0 ),
+			'maxdisk' => (int) ( $r['maxdisk'] ?? 0 ),
+			'uptime'  => (int) ( $r['uptime'] ?? 0 ),
 			'type'    => 'qemu',
 		);
 	}
 
-	/**
-	 * Normaliza um container LXC para o formato do dashboard.
-	 *
-	 * @param array $resource Recurso bruto do Proxmox.
-	 * @return array
-	 */
-	private function normalize_lxc( array $resource ) {
+	private function normalize_lxc( $r ) {
 		return array(
-			'vmid'    => isset( $resource['vmid'] ) ? (int) $resource['vmid'] : 0,
-			'name'    => isset( $resource['name'] ) ? $resource['name'] : '--',
-			'node'    => isset( $resource['node'] ) ? $resource['node'] : '--',
-			'status'  => isset( $resource['status'] ) ? $resource['status'] : 'unknown',
-			'cpu'     => isset( $resource['cpu'] ) ? round( (float) $resource['cpu'] * 100, 1 ) : 0,
-			'mem'     => isset( $resource['mem'] ) ? (int) $resource['mem'] : 0,
-			'maxmem'  => isset( $resource['maxmem'] ) ? (int) $resource['maxmem'] : 0,
-			'disk'    => isset( $resource['disk'] ) ? (int) $resource['disk'] : 0,
-			'maxdisk' => isset( $resource['maxdisk'] ) ? (int) $resource['maxdisk'] : 0,
-			'uptime'  => isset( $resource['uptime'] ) ? (int) $resource['uptime'] : 0,
+			'vmid'    => (int) ( $r['vmid'] ?? 0 ),
+			'name'    => $r['name'] ?? '--',
+			'node'    => $r['node'] ?? '--',
+			'status'  => $r['status'] ?? 'unknown',
+			'cpu'     => round( (float) ( $r['cpu'] ?? 0 ) * 100, 1 ),
+			'mem'     => (int) ( $r['mem'] ?? 0 ),
+			'maxmem'  => (int) ( $r['maxmem'] ?? 0 ),
+			'disk'    => (int) ( $r['disk'] ?? 0 ),
+			'maxdisk' => (int) ( $r['maxdisk'] ?? 0 ),
+			'uptime'  => (int) ( $r['uptime'] ?? 0 ),
 			'type'    => 'lxc',
 		);
 	}
 
-	/**
-	 * Retorna a lista de storages com uso (total/usado/livre).
-	 *
-	 * O endpoint /api2/json/storage retorna apenas a *configuração* (sem uso),
-	 * por isso o total sempre vinha zerado. A implementação correta tenta em ordem:
-	 *  1) /api2/json/cluster/resources (type=storage) — já traz disk/maxdisk
-	 *  2) /api2/json/nodes/{node}/storage por node — traz total/used/avail reais
-	 *  3) fallback para /api2/json/storage apenas para não retornar vazio
-	 *
-	 * @return WP_Error|array
-	 */
+	public function get_vms() {
+		$r = $this->get_resources();
+		return is_wp_error( $r ) ? $r : $r['vms'];
+	}
+
+	public function get_lxc() {
+		$r = $this->get_resources();
+		return is_wp_error( $r ) ? $r : $r['lxc'];
+	}
+
 	public function get_storage() {
-		// 1) Tenta via cluster/resources (mais rápido, já tem uso)
+		// Prefer cluster/resources for usage data.
 		$cr = $this->get( '/api2/json/cluster/resources' );
-		if ( ! is_wp_error( $cr ) && isset( $cr['data'] ) && is_array( $cr['data'] ) ) {
-			$found = array();
+		if ( ! is_wp_error( $cr ) && is_array( $cr['data'] ?? null ) ) {
+			$out = array();
 			foreach ( $cr['data'] as $r ) {
 				if ( ( $r['type'] ?? '' ) !== 'storage' ) {
 					continue;
@@ -460,100 +244,70 @@ class Proxmox_API {
 					$parts = explode( '/', $name );
 					$name  = end( $parts );
 				}
-				if ( '' === $name ) {
+				$total = (int) ( $r['maxdisk'] ?? 0 );
+				$used  = (int) ( $r['disk'] ?? 0 );
+				if ( $total <= 0 ) {
 					continue;
 				}
-				$total = (int) ( $r['maxdisk'] ?? $r['total'] ?? 0 );
-				$used  = (int) ( $r['disk'] ?? $r['used'] ?? 0 );
-				if ( $total <= 0 ) {
-					continue; // sem métrica, tenta fallback por node
-				}
-				$found[] = array(
+				$out[] = array(
 					'storage' => $name,
-					'type'    => $r['plugintype'] ?? $r['type'] ?? '--',
+					'type'    => $r['plugintype'] ?? 'storage',
 					'status'  => $r['status'] ?? 'available',
 					'active'  => true,
 					'total'   => $total,
 					'used'    => $used,
 					'free'    => max( 0, $total - $used ),
-					'percent' => $total > 0 ? round( ( $used / $total ) * 100, 1 ) : 0,
+					'percent' => round( ( $used / $total ) * 100, 1 ),
 					'node'    => $r['node'] ?? '',
 				);
 			}
-			if ( ! empty( $found ) ) {
-				return $found;
+			if ( ! empty( $out ) ) {
+				return $out;
 			}
 		}
 
-		// 2) Fallback por node: /nodes/{node}/storage tem dados reais de uso
-		$nodes_res = $this->get( '/api2/json/nodes' );
-		if ( ! is_wp_error( $nodes_res ) && isset( $nodes_res['data'] ) && is_array( $nodes_res['data'] ) ) {
-			$by_storage = array();
-			foreach ( $nodes_res['data'] as $n ) {
-				$node_name = $n['node'] ?? '';
-				if ( '' === $node_name ) {
+		// Fallback: /nodes/{node}/storage
+		$nodes = $this->get( '/api2/json/nodes' );
+		if ( ! is_wp_error( $nodes ) && is_array( $nodes['data'] ?? null ) ) {
+			$by = array();
+			foreach ( $nodes['data'] as $n ) {
+				$node = $n['node'] ?? '';
+				if ( '' === $node ) {
 					continue;
 				}
-				$sres = $this->get( '/api2/json/nodes/' . rawurlencode( $node_name ) . '/storage' );
-				if ( is_wp_error( $sres ) || ! isset( $sres['data'] ) || ! is_array( $sres['data'] ) ) {
+				$sr = $this->get( '/api2/json/nodes/' . rawurlencode( $node ) . '/storage' );
+				if ( is_wp_error( $sr ) || ! is_array( $sr['data'] ?? null ) ) {
 					continue;
 				}
-				foreach ( $sres['data'] as $s ) {
-					$nm = $s['storage'] ?? '';
-					if ( '' === $nm ) {
-						continue;
-					}
-					// Deduplica: storages compartilhados aparecem em todo node — mantém 1 entrada
-					if ( isset( $by_storage[ $nm ] ) ) {
+				foreach ( $sr['data'] as $s ) {
+					$name = $s['storage'] ?? '';
+					if ( '' === $name || isset( $by[ $name ] ) ) {
 						continue;
 					}
 					$total = (int) ( $s['total'] ?? $s['maxdisk'] ?? 0 );
 					$used  = (int) ( $s['used'] ?? $s['disk'] ?? 0 );
-					$free  = isset( $s['avail'] ) ? (int) $s['avail'] : max( 0, $total - $used );
-					if ( isset( $s['avail'] ) && $total <= 0 && $free > 0 ) {
-						$total = $used + $free;
+					$avail = (int) ( $s['avail'] ?? max( 0, $total - $used ) );
+					if ( $total <= 0 && $avail > 0 ) {
+						$total = $used + $avail;
 					}
-					$status = $s['status'] ?? ( ! empty( $s['active'] ) ? 'available' : ( ! empty( $s['enabled'] ) ? 'available' : 'disabled' ) );
-					$by_storage[ $nm ] = array(
-						'storage' => $nm,
-						'type'    => $s['type'] ?? '--',
-						'status'  => $status,
+					$by[ $name ] = array(
+						'storage' => $name,
+						'type'    => $s['type'] ?? 'storage',
+						'status'  => ! empty( $s['active'] ) ? 'available' : ( $s['status'] ?? 'unknown' ),
 						'active'  => ! empty( $s['active'] ),
 						'total'   => max( 0, $total ),
 						'used'    => max( 0, $used ),
-						'free'    => max( 0, $free ),
+						'free'    => max( 0, $avail ),
 						'percent' => $total > 0 ? round( ( $used / $total ) * 100, 1 ) : 0,
-						'node'    => $node_name,
+						'node'    => $node,
 					);
 				}
 			}
-			if ( ! empty( $by_storage ) ) {
-				return array_values( $by_storage );
+			if ( ! empty( $by ) ) {
+				return array_values( $by );
 			}
 		}
 
-		// 3) Último fallback: endpoint de configuração (sem uso) — evita tabela vazia
-		$response = $this->get( '/api2/json/storage' );
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-		$storages = isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array();
-		$result   = array();
-		foreach ( $storages as $storage ) {
-			$total = isset( $storage['maxdisk'] ) ? (int) $storage['maxdisk'] : ( isset( $storage['total'] ) ? (int) $storage['total'] : 0 );
-			$used  = isset( $storage['disk'] ) ? (int) $storage['disk'] : ( isset( $storage['used'] ) ? (int) $storage['used'] : 0 );
-			$free  = isset( $storage['avail'] ) ? (int) $storage['avail'] : ( $total - $used );
-			$result[] = array(
-				'storage' => isset( $storage['storage'] ) ? $storage['storage'] : '--',
-				'type'    => isset( $storage['type'] ) ? $storage['type'] : '--',
-				'status'  => isset( $storage['status'] ) ? $storage['status'] : 'unknown',
-				'active'  => isset( $storage['active'] ) ? (bool) $storage['active'] : false,
-				'total'   => max( 0, $total ),
-				'used'    => max( 0, $used ),
-				'free'    => max( 0, $free ),
-				'percent' => $total > 0 ? round( ( $used / $total ) * 100, 1 ) : 0,
-			);
-		}
-		return $result;
+		return array();
 	}
 }

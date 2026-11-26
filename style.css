@@ -1,21 +1,11 @@
 /*
-Theme Name: Proxmox Dashboard
-Theme URI: https://example.com/proxmox-dashboard
-Author: Seu Nome
-Author URI: https://example.com
-Description: Tema WordPress em tela única (full-screen) que transforma o WordPress em um painel moderno de monitoramento do Proxmox VE, utilizando a API REST oficial do Proxmox.
-Version: 2.4.0
-Requires at least: 5.8
-Tested up to: 6.7
+Theme Name: Proxmox VE Dashboard
+Theme URI: https://github.com/marcovivas/proxmox-ve-dashboard
+Author: Marco Vivas
+Description: Tema WordPress que unifica o visual do Mapa da Infraestrutura Proxmox com monitoramento dinâmico via API Proxmox VE. Inclui métricas globais, armazenamento, tabelas, containers LXC, serviços Docker e painel administrativo completo.
+Version: 1.0.0
+Requires at least: 6.0
+Tested up to: 6.8
 Requires PHP: 7.4
-License: GNU General Public License v2 or later
-License URI: http://www.gnu.org/licenses/gpl-2.0.html
-Text Domain: proxmox-dashboard
-Tags: dashboard, monitoring, proxmox, full-screen
+Text Domain: proxmox-ve-dashboard
 */
-
-/*
- * O style.css do tema é principalmente usado pelo WordPress para ler os
- * metadados acima. Os estilos do dashboard ficam em assets/css/dashboard.css,
- * enfileirados via functions.php.
- */

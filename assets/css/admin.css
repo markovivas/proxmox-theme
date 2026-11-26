@@ -1,0 +1,11 @@
+.pvd-admin .pvd-card { background:#fff; border:1px solid #ccd0d4; padding:16px; margin:16px 0; max-width:900px; }
+.pvd-backup-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; margin-top:16px; }
+.pvd-repeater { display:flex; flex-direction:column; gap:12px; margin:12px 0; }
+.pvd-repeater-row { background:#fff; border:1px solid #dcdcde; padding:12px; }
+.pvd-repeater-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.pvd-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+.pvd-grid label { display:flex; flex-direction:column; gap:4px; font-weight:600; font-size:12px; }
+.pvd-grid input[type="text"], .pvd-grid textarea { width:100%; }
+.pvd-grid .pvd-full { grid-column:1 / -1; }
+.pvd-media-field { display:flex; gap:8px; align-items:center; }
+.pvd-media-field input { flex:1; }

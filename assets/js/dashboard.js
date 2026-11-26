@@ -1,377 +1,311 @@
-/**
- * Proxmox Dashboard & Mapa da Infraestrutura — Script do Frontend
- * Lógica reativa unificada: relógio, polling da API, status ao vivo nos cards e clique para copiar
- *
- * @package Proxmox_Dashboard
- * @since   2.3.0
- */
 (function () {
-	'use strict';
+  'use strict';
 
-	var cfg = window.proxmoxDashboard || {};
-	var apiBase = cfg.restUrl || '';
-	var intervalMs = parseInt(cfg.interval, 10) || 5000;
-	var pollTimer = null;
+  const cfg = window.pvdDashboard || {};
+  const restBase = (cfg.restUrl || '').replace(/\/$/, '');
+  const refreshMs = Math.max(0, parseInt(cfg.refreshInterval || 0, 10));
+  let refreshing = false;
 
-	function el(id) {
-		return document.getElementById(id);
-	}
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmtBytes = (n) => {
+    const b = Math.max(0, Number(n) || 0);
+    const u = ['B','KB','MB','GB','TB','PB'];
+    let i = 0, v = b;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i === 0 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i];
+  };
+  const fmtPct = (used, total) => total > 0 ? ((used / total) * 100) : 0;
+  const fmtUptime = (sec) => {
+    sec = Math.max(0, parseInt(sec || 0, 10));
+    const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+  const statusClass = (s) => {
+    s = String(s || '').toLowerCase();
+    if (['running','online','available','active'].includes(s)) return 'pvd-badge pvd-badge--ok';
+    if (['stopped','offline','inactive','disabled','error','failed'].includes(s)) return 'pvd-badge pvd-badge--err';
+    if (['paused','suspended','unknown'].includes(s)) return 'pvd-badge pvd-badge--warn';
+    return 'pvd-badge pvd-badge--muted';
+  };
+  const statusLabel = (s) => {
+    const map = {running:'Ativo',stopped:'Parado',paused:'Pausado',online:'Online',offline:'Offline',available:'Disponível',unknown:'Desconhecido'};
+    const k = String(s||'').toLowerCase();
+    return map[k] || (s || '--');
+  };
 
-	function esc(str) {
-		return String(str === undefined || str === null ? '' : str)
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;')
-			.replace(/'/g, '&#039;');
-	}
+  function iconHtml(icon, alt) {
+    if (icon && (icon.includes('/') || /\.(svg|png|jpe?g|webp|gif)$/i.test(icon))) {
+      return `<img src="${esc(icon)}" alt="${esc(alt||'')}" class="card-icon" loading="lazy">`;
+    }
+    return esc(icon || '▣');
+  }
+  function defaultIconForContainer(name) {
+    const n = String(name||'').toLowerCase();
+    if (n.includes('docker')) return cfg.themeUri ? cfg.themeUri + '/img/docker.svg' : 'img/docker.svg';
+    if (n.includes('cloudflared')) return 'img/cloudflare.svg';
+    if (n.includes('pihole') || n.includes('pi-hole')) return 'img/pi-hole.svg';
+    if (n.includes('vaultwarden')) return 'img/vaultwarden.svg';
+    if (n.includes('wordpress')) return 'img/wordpress.svg';
+    if (n.includes('gitea')) return 'img/gitea.svg';
+    return 'img/box.svg';
+  }
+  function defaultIconForDocker(name) {
+    const n = String(name||'').toLowerCase();
+    if (n.includes('portainer')) return 'img/portainer.svg';
+    if (n.includes('gitea')) return 'img/gitea.svg';
+    if (n.includes('jellyfin')) return 'img/jellyfin.svg';
+    if (n.includes('qbittorrent')) return 'img/qbittorrent.svg';
+    if (n.includes('metube')) return 'img/metube.svg';
+    if (n.includes('navidrome')) return 'img/navidrome.svg';
+    if (n.includes('note')) return 'img/notes.svg';
+    if (n.includes('arquivo') || n.includes('filebrowser')) return 'img/filebrowser.svg';
+    return 'img/files.svg';
+  }
+  function resolveIcon(icon, fallbackName, type) {
+    if (icon && String(icon).trim()) return icon;
+    const base = (cfg.themeUri || '').replace(/\/$/, '');
+    const file = type === 'docker' ? defaultIconForDocker(fallbackName) : defaultIconForContainer(fallbackName);
+    return base ? base + '/' + file : file;
+  }
 
-	function showToast(msg) {
-		var t = el('pxd-toast');
-		if (!t) return;
-		t.textContent = msg || (cfg.i18n && cfg.i18n.copied) || 'Copiado para a área de transferência!';
-		t.classList.add('is-visible');
-		clearTimeout(t._hideTimer);
-		t._hideTimer = setTimeout(function () {
-			t.classList.remove('is-visible');
-		}, 2200);
-	}
+  function renderLxc() {
+    const grid = document.getElementById('lxcGrid');
+    if (!grid) return;
+    const items = Array.isArray(cfg.lxc) ? cfg.lxc : [];
+    if (!items.length) {
+      grid.innerHTML = `<div class="pvd-empty-block">Nenhum container LXC configurado. Adicione no painel administrativo.</div>`;
+      return;
+    }
+    grid.innerHTML = items.map(x => `
+      <article class="lxc-card" title="Clique para copiar as informações">
+        <div class="lxc-head"><span class="id-badge">${esc(x.id)}</span><h3>${esc(x.name)}</h3></div>
+        <div class="icon-box">${iconHtml(resolveIcon(x.icon, x.name, 'lxc'), x.name)}</div>
+        <div class="meta">
+          <b>IP:</b> ${esc(x.ip || '—')}<br>
+          <b>MAC:</b> ${esc(x.mac || '—')}<br>
+          <b>URL:</b> <span class="link">${esc(x.url || '—')}</span>
+        </div>
+        <div class="function"><b>Função</b><br>${esc(x.fn || '—')}</div>
+      </article>`).join('');
+  }
 
-	function setText(id, val) {
-		var node = el(id);
-		if (!node) return;
-		node.textContent = (val === undefined || val === null || val === '') ? '–' : String(val);
-	}
+  function renderDocker() {
+    const grid = document.getElementById('dockerGrid');
+    if (!grid) return;
+    const items = Array.isArray(cfg.docker) ? cfg.docker : [];
+    if (!items.length) {
+      grid.innerHTML = `<div class="pvd-empty-block">Nenhum serviço Docker configurado. Adicione no painel administrativo.</div>`;
+      return;
+    }
+    grid.innerHTML = items.map(x => `
+      <article class="docker-card" title="Clique para copiar">
+        <div class="service-icon">${iconHtml(resolveIcon(x.icon, x.name, 'docker'), x.name)}</div>
+        <h4>${esc(x.name)}</h4>
+        <p><b>Porta:</b> ${esc(x.port || '—')}<br><span class="domain">${esc(x.domain || '—')}</span></p>
+      </article>`).join('');
+  }
 
-	function fmtBytes(bytes, prec) {
-		prec = prec || 1;
-		if (typeof bytes !== 'number' || isNaN(bytes) || bytes < 0) return '0 B';
-		var units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-		var power = 0, value = bytes;
-		while (value >= 1024 && power < units.length - 1) {
-			value /= 1024;
-			power++;
-		}
-		return value.toFixed(power > 0 ? prec : 0) + ' ' + units[power];
-	}
+  function bindCopy() {
+    document.querySelectorAll('.lxc-card, .docker-card').forEach(card => {
+      if (card.dataset.copyBound) return;
+      card.dataset.copyBound = '1';
+      card.style.cursor = 'pointer';
+      card.addEventListener('click', async () => {
+        const text = card.innerText.trim();
+        try {
+          await navigator.clipboard.writeText(text);
+          const old = card.style.outline;
+          card.style.outline = '3px solid #21a9e8';
+          setTimeout(() => { card.style.outline = old; }, 500);
+        } catch (_) {}
+      });
+    });
+  }
 
-	function fetchJson(path) {
-		return fetch(apiBase + path, {
-			credentials: 'same-origin',
-			headers: { Accept: 'application/json' },
-		}).then(function (res) {
-			return res.json().catch(function () { return null; }).then(function (data) {
-				if (!res.ok) {
-					var err = new Error((data && data.message) || 'HTTP ' + res.status);
-					err.status = res.status;
-					throw err;
-				}
-				return data;
-			});
-		});
-	}
+  function setMeta(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
 
-	// 1. Relógio dinâmico no rodapé
-	function updateClock() {
-		var clockEl = el('clock');
-		if (clockEl) {
-			clockEl.textContent = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' });
-		}
-	}
-	updateClock();
-	setInterval(updateClock, 1000);
+  function renderMetrics(status) {
+    const grid = document.getElementById('metricsGrid');
+    if (!grid) return;
+    const cpu = Math.max(0, Math.min(100, (Number(status.cpuTotal) || 0) * 100));
+    const ramPct = fmtPct(status.ramUsed, status.ramTotal);
+    const diskPct = fmtPct(status.diskUsed, status.diskTotal);
+    const nodes = Number(status.nodeCount) || 0;
+    const onlineTxt = nodes > 0 ? `${nodes} node(s)` : '—';
+    const cards = [
+      { label:'CPU', value: cpu.toFixed(1)+'%', sub: `Média do cluster • ${onlineTxt}`, pct: cpu, cls:'cpu' },
+      { label:'Memória RAM', value: ramPct.toFixed(1)+'%', sub: `${fmtBytes(status.ramUsed)} / ${fmtBytes(status.ramTotal)}`, pct: ramPct, cls:'ram' },
+      { label:'Armazenamento', value: diskPct.toFixed(1)+'%', sub: `${fmtBytes(status.diskUsed)} / ${fmtBytes(status.diskTotal)}`, pct: diskPct, cls:'disk' },
+      { label:'Nodes / Storages', value: String(nodes), sub: `${Number(status.storageCount)||0} storage(s) • Uptime ${fmtUptime(status.uptime)}`, pct: nodes > 0 ? 100 : 0, cls:'nodes' },
+    ];
+    grid.innerHTML = cards.map(c => `
+      <article class="metric-card">
+        <div class="metric-card__head"><span class="metric-card__label">${esc(c.label)}</span><span class="metric-card__value">${esc(c.value)}</span></div>
+        <div class="metric-bar"><div class="metric-bar__fill metric-bar__fill--${c.cls}" style="width:${Math.max(0,Math.min(100,c.pct)).toFixed(1)}%"></div></div>
+        <div class="metric-card__sub">${esc(c.sub)}</div>
+      </article>`).join('');
+    setMeta('metrics-meta', `ATUALIZADO ${new Date().toLocaleTimeString('pt-BR')}`);
+  }
 
-	// 2. Clique para copiar nos cards de containers e serviços
-	function initClipboard() {
-		var cards = document.querySelectorAll('.lxc-card, .docker-card');
-		cards.forEach(function (card) {
-			card.addEventListener('click', function (e) {
-				// Se clicou em um link direto (<a>), permite abrir normalmente
-				if (e.target.tagName === 'A' && !e.target.classList.contains('pxd-copyable')) {
-					return;
-				}
+  function renderStorage(storages) {
+    const grid = document.getElementById('storageGrid');
+    if (!grid) return;
+    const custom = Array.isArray(cfg.storageCustom) ? cfg.storageCustom : [];
+    if (custom.length > 0) {
+      grid.innerHTML = custom.map(s => `
+        <article class="storage-card">
+          <div class="storage-card__head">
+            <div class="drive">${esc(s.drive || 'DISK')}</div>
+            <div>
+              <h3 class="storage-card__title">${esc(s.title || 'Armazenamento')}</h3>
+              <div class="storage-card__meta">Configurado no painel administrativo</div>
+            </div>
+          </div>
+          <ul class="storage-card__items">${String(s.items||'').split(/\r?\n/).filter(Boolean).map(i=>`<li>${esc(i)}</li>`).join('') || '<li>—</li>'}</ul>
+        </article>`).join('');
+      setMeta('storage-meta', 'PERSONALIZADO');
+      return;
+    }
 
-				var textToCopy = '';
-				// Se clicou em um elemento com classe pxd-copyable, copia só ele
-				if (e.target.classList.contains('pxd-copyable')) {
-					textToCopy = e.target.textContent.trim();
-				} else {
-					textToCopy = card.innerText.trim();
-				}
+    const items = Array.isArray(storages) ? storages : [];
+    if (!items.length) {
+      grid.innerHTML = `<article class="storage-card"><div class="storage-card__head"><div class="drive">—</div><div><h3 class="storage-card__title">Sem dados de armazenamento</h3><div class="storage-card__meta">Aguardando resposta da API do Proxmox.</div></div></div></article>`;
+      setMeta('storage-meta', 'SEM DADOS');
+      return;
+    }
+    grid.innerHTML = items.map(s => {
+      const pct = Math.max(0, Math.min(100, Number(s.percent) || 0));
+      const label = String(s.type || '').toLowerCase().includes('dir') ? 'DIR' : String(s.type || 'storage').slice(0, 4).toUpperCase();
+      return `
+      <article class="storage-card">
+        <div class="storage-card__head">
+          <div class="drive">${esc(label)}</div>
+          <div style="min-width:0;flex:1">
+            <h3 class="storage-card__title">${esc(s.storage || 'Storage')}</h3>
+            <div class="storage-card__meta">Tipo: ${esc(s.type || '—')} • Node: ${esc(s.node || '—')} • Status: ${esc(statusLabel(s.status))}</div>
+          </div>
+        </div>
+        <div class="storage-bar"><div class="storage-bar__fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="storage-card__stats">
+          <div class="storage-card__stat"><b>${esc(fmtBytes(s.used))}</b>Usado</div>
+          <div class="storage-card__stat"><b>${esc(fmtBytes(s.free))}</b>Livre</div>
+          <div class="storage-card__stat"><b>${esc(fmtBytes(s.total))}</b>Total</div>
+        </div>
+      </article>`;
+    }).join('');
+    setMeta('storage-meta', `${items.length} STORAGE(S)`);
+  }
 
-				if (textToCopy && navigator.clipboard && navigator.clipboard.writeText) {
-					navigator.clipboard.writeText(textToCopy).then(function () {
-						showToast((cfg.i18n && cfg.i18n.copied) || 'Copiado para a área de transferência!');
-						var oldOutline = card.style.outline;
-						card.style.outline = '3px solid #087ff5';
-						setTimeout(function () {
-							card.style.outline = oldOutline;
-						}, 450);
-					}).catch(function () {});
-				}
-			});
-		});
-	}
+  function usageCell(used, total) {
+    const pct = total > 0 ? (used / total) * 100 : 0;
+    const cls = pct >= 90 ? 'pvd-usage__fill pvd-usage__fill--crit' : pct >= 75 ? 'pvd-usage__fill pvd-usage__fill--high' : 'pvd-usage__fill';
+    return `<div class="pvd-usage"><div class="pvd-usage__bar"><div class="${cls}" style="width:${Math.max(0,Math.min(100,pct)).toFixed(1)}%"></div></div><span class="pvd-mono">${pct.toFixed(0)}%</span></div>`;
+  }
 
-	// 3. Alternador de Visualização (Mapa vs Tabelas)
-	function initViewToggle() {
-		var btnMapa = el('pxd-view-toggle');
-		var btnTabelas = el('pxd-tables-toggle');
-		var secContainers = el('section-containers');
-		var secDocker = el('section-docker');
-		var secTables = el('pxd-technical-tables');
+  function renderTables(nodes, vms, lxc, storages) {
+    const tn = document.querySelector('#table-nodes tbody');
+    if (tn) tn.innerHTML = (nodes||[]).length ? nodes.map(n => `<tr>
+      <td>${esc(n.node)}</td><td><span class="${statusClass(n.status)}">${esc(statusLabel(n.status))}</span></td>
+      <td>${usageCell((Number(n.cpu)||0),100)}<div class="pvd-mono">${Number(n.cpu||0).toFixed(1)}%</div></td>
+      <td>${usageCell(n.mem,n.maxmem)}<div class="pvd-mono">${esc(fmtBytes(n.mem))} / ${esc(fmtBytes(n.maxmem))}</div></td>
+      <td>${usageCell(n.disk,n.maxdisk)}<div class="pvd-mono">${esc(fmtBytes(n.disk))} / ${esc(fmtBytes(n.maxdisk))}</div></td>
+      <td class="pvd-mono">${esc(fmtUptime(n.uptime))}</td></tr>`).join('') : `<tr><td colspan="6" class="pvd-empty">Nenhum node encontrado.</td></tr>`;
 
-		if (!btnMapa || !btnTabelas) return;
+    const renderVMRows = (rows, tbody, emptyCols) => {
+      if (!tbody) return;
+      tbody.innerHTML = (rows||[]).length ? rows.map(r => `<tr>
+        <td class="pvd-mono">${esc(r.vmid)}</td><td>${esc(r.name)}</td><td>${esc(r.node)}</td>
+        <td><span class="${statusClass(r.status)}">${esc(statusLabel(r.status))}</span></td>
+        <td>${usageCell(Number(r.cpu||0),100)}<div class="pvd-mono">${Number(r.cpu||0).toFixed(1)}%</div></td>
+        <td>${usageCell(r.mem,r.maxmem)}<div class="pvd-mono">${esc(fmtBytes(r.mem))} / ${esc(fmtBytes(r.maxmem))}</div></td>
+        <td>${usageCell(r.disk,r.maxdisk)}<div class="pvd-mono">${esc(fmtBytes(r.disk))} / ${esc(fmtBytes(r.maxdisk))}</div></td>
+        <td class="pvd-mono">${esc(fmtUptime(r.uptime))}</td></tr>`).join('') : `<tr><td colspan="${emptyCols}" class="pvd-empty">Sem dados.</td></tr>`;
+    };
+    renderVMRows(vms, document.querySelector('#table-vms tbody'), 8);
+    renderVMRows(lxc, document.querySelector('#table-lxc tbody'), 8);
 
-		btnMapa.addEventListener('click', function () {
-			btnMapa.classList.add('is-active');
-			btnTabelas.classList.remove('is-active');
-			if (secContainers) secContainers.style.display = '';
-			if (secDocker) secDocker.style.display = '';
-			if (secTables) secTables.style.display = 'none';
-		});
+    const ts = document.querySelector('#table-storage tbody');
+    if (ts) ts.innerHTML = (storages||[]).length ? storages.map(s => `<tr>
+      <td>${esc(s.storage)}</td><td>${esc(s.type)}</td>
+      <td><span class="${statusClass(s.status)}">${esc(statusLabel(s.status))}</span></td>
+      <td class="pvd-mono">${esc(fmtBytes(s.total))}</td><td class="pvd-mono">${esc(fmtBytes(s.used))}</td>
+      <td class="pvd-mono">${esc(fmtBytes(s.free))}</td>
+      <td>${usageCell(s.used,s.total)}<div class="pvd-mono">${Number(s.percent||0).toFixed(1)}%</div></td>
+      <td>${esc(s.node || '—')}</td></tr>`).join('') : `<tr><td colspan="8" class="pvd-empty">Sem dados de storage.</td></tr>`;
+  }
 
-		btnTabelas.addEventListener('click', function () {
-			btnTabelas.classList.add('is-active');
-			btnMapa.classList.remove('is-active');
-			if (secTables) secTables.style.display = '';
-		});
-	}
+  async function fetchJson(endpoint) {
+    const res = await fetch(`${restBase}/${endpoint}`, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    return data;
+  }
 
-	// 4. Modo TV / Kiosk e Tela Cheia
-	function initKioskAndFullscreen() {
-		var kioskBtn = el('pxd-kiosk');
-		if (kioskBtn) {
-			kioskBtn.addEventListener('click', function () {
-				document.body.classList.toggle('is-kiosk');
-				var isKiosk = document.body.classList.contains('is-kiosk');
-				var on = kioskBtn.querySelector('.pxd-icon--kiosk-on');
-				var off = kioskBtn.querySelector('.pxd-icon--kiosk-off');
-				if (on && off) {
-					on.style.display = isKiosk ? 'none' : '';
-					off.style.display = isKiosk ? '' : 'none';
-				}
-				showToast(isKiosk ? 'Modo TV ativado' : 'Modo TV desativado');
-			});
-		}
+  async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    setMeta('metrics-meta', 'ATUALIZANDO...');
+    try {
+      const [status, nodes, resources, storages] = await Promise.all([
+        fetchJson('status'),
+        fetchJson('nodes').catch(() => []),
+        fetchJson('resources').catch(() => ({vms:[],lxc:[]})),
+        fetchJson('storage').catch(() => []),
+      ]);
+      renderMetrics(status || {});
+      renderStorage(storages || []);
+      renderTables(nodes || [], (resources||{}).vms || [], (resources||{}).lxc || [], storages || []);
+    } catch (e) {
+      setMeta('metrics-meta', 'ERRO NA API');
+      const msg = esc(e.message || 'Erro');
+      ['table-nodes','table-vms','table-lxc','table-storage'].forEach(id => {
+        const tb = document.querySelector(`#${id} tbody`);
+        if (tb) tb.innerHTML = `<tr><td colspan="8" class="pvd-empty">Erro ao carregar: ${msg}</td></tr>`;
+      });
+      const mg = document.getElementById('metricsGrid');
+      if (mg) mg.innerHTML = `<div class="metric-card"><div class="metric-card__label">API</div><div class="metric-card__value" style="font-size:16px;color:#bf3d3d">Erro de conexão</div><div class="metric-card__sub">${msg}</div></div>`;
+    } finally {
+      refreshing = false;
+    }
+  }
 
-		var fsBtn = el('pxd-fullscreen');
-		if (fsBtn) {
-			fsBtn.addEventListener('click', function () {
-				if (!document.fullscreenElement) {
-					document.documentElement.requestFullscreen().catch(function () {});
-				} else {
-					document.exitFullscreen().catch(function () {});
-				}
-			});
-		}
+  function updateClock() {
+    const el = document.getElementById('clock');
+    if (el) el.textContent = new Date().toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'medium' });
+  }
 
-		var refreshBtn = el('pxd-refresh');
-		if (refreshBtn) {
-			refreshBtn.addEventListener('click', function () {
-				refreshBtn.style.transform = 'rotate(180deg)';
-				refreshBtn.style.transition = 'transform .4s ease';
-				setTimeout(function () { refreshBtn.style.transform = ''; }, 400);
-				pollAll();
-			});
-		}
-	}
+  document.addEventListener('DOMContentLoaded', () => {
+    // expose themeUri from localized script if present
+    if (!cfg.themeUri) {
+      const css = document.querySelector('link[href*="assets/css/dashboard.css"]');
+      if (css) cfg.themeUri = css.href.replace(/\/assets\/css\/dashboard\.css.*$/, '');
+    }
+    renderLxc();
+    renderDocker();
+    bindCopy();
+    updateClock();
+    setInterval(updateClock, 1000);
 
-	// 5. Atualização de Gauges e Contadores
-	function renderGauges(status) {
-		if (!status) return;
-
-		// Resumo de contadores
-		setText('pxd-sum-nodes', status.nodeCount);
-		setText('pxd-sum-vms', (status.vmsRunning !== undefined) ? status.vmsRunning : '–');
-		setText('pxd-sum-lxc', (status.lxcRunning !== undefined) ? status.lxcRunning : '–');
-		setText('pxd-sum-storage', (status.storageCount !== undefined) ? status.storageCount : '–');
-
-		// CPU
-		var cpuPct = Number(status.cpuPct) || 0;
-		var cpuGauge = el('pxd-gauge-cpu');
-		var cpuBar = el('pxd-bar-cpu');
-		var cpuDetail = el('pxd-cpu-detail');
-		if (cpuGauge) cpuGauge.innerHTML = '<span>' + cpuPct.toFixed(1) + '%</span>';
-		if (cpuBar) cpuBar.style.width = Math.min(100, Math.max(0, cpuPct)) + '%';
-		if (cpuDetail) cpuDetail.textContent = 'pico do cluster • ' + cpuPct.toFixed(1) + '%';
-
-		// RAM
-		var ramTotal = Number(status.ramTotal) || 0;
-		var ramUsed = Number(status.ramUsed) || 0;
-		var ramPct = ramTotal > 0 ? (ramUsed / ramTotal) * 100 : 0;
-		var ramGauge = el('pxd-gauge-ram');
-		var ramBar = el('pxd-bar-ram');
-		var ramDetail = el('pxd-ram-detail');
-		if (ramGauge) ramGauge.innerHTML = '<span>' + ramPct.toFixed(1) + '%</span>';
-		if (ramBar) ramBar.style.width = Math.min(100, Math.max(0, ramPct)) + '%';
-		if (ramDetail) ramDetail.textContent = 'Usado ' + fmtBytes(ramUsed) + ' de ' + fmtBytes(ramTotal);
-
-		// Disco
-		var diskTotal = Number(status.diskTotal) || 0;
-		var diskUsed = Number(status.diskUsed) || 0;
-		var diskPct = diskTotal > 0 ? (diskUsed / diskTotal) * 100 : 0;
-		var diskGauge = el('pxd-gauge-disk');
-		var diskBar = el('pxd-bar-disk');
-		var diskDetail = el('pxd-disk-detail');
-		if (diskGauge) diskGauge.innerHTML = '<span>' + diskPct.toFixed(1) + '%</span>';
-		if (diskBar) diskBar.style.width = Math.min(100, Math.max(0, diskPct)) + '%';
-		if (diskDetail) diskDetail.textContent = 'Usado ' + fmtBytes(diskUsed) + ' de ' + fmtBytes(diskTotal);
-	}
-
-	// 6. Atualização dos Cards de Containers com Status ao Vivo da API
-	function updateContainerCards(vms, lxc) {
-		var allResources = {};
-		if (Array.isArray(vms)) {
-			vms.forEach(function (v) { allResources[String(v.vmid)] = v; });
-		}
-		if (Array.isArray(lxc)) {
-			lxc.forEach(function (c) { allResources[String(c.vmid)] = c; });
-		}
-
-		var pulses = document.querySelectorAll('.pxd-live-pulse[data-live-status]');
-		pulses.forEach(function (p) {
-			var vmid = String(p.getAttribute('data-live-status')).trim();
-			var item = allResources[vmid];
-			if (item) {
-				var isRunning = (item.status === 'running' || item.status === 'online');
-				p.className = 'pxd-live-pulse ' + (isRunning ? 'pxd-live-pulse--running' : 'pxd-live-pulse--stopped');
-				p.setAttribute('title', isRunning ? 'Ativo (online)' : 'Parado (' + item.status + ')');
-
-				// Mini medidor
-				var card = p.closest('.lxc-card');
-				if (card) {
-					var meter = card.querySelector('.pxd-card-live-meter');
-					if (meter && item.maxmem) {
-						var memPct = Math.min(100, Math.round((item.mem / item.maxmem) * 100));
-						var fill = meter.querySelector('.pxd-card-meter-fill');
-						var txt = meter.querySelector('.pxd-card-meter-txt');
-						if (fill) fill.style.width = memPct + '%';
-						if (txt) txt.textContent = 'RAM: ' + memPct + '% (' + fmtBytes(item.mem) + ')';
-						meter.style.display = 'flex';
-					}
-				}
-			}
-		});
-	}
-
-	// 7. Atualização do Health-Check dos Serviços Docker
-	function updateDockerHealth(services) {
-		if (!Array.isArray(services)) return;
-
-		var serviceMap = {};
-		services.forEach(function (s) {
-			if (s.name) serviceMap[s.name.toLowerCase().trim()] = s;
-			if (s.url) serviceMap[s.url.toLowerCase().trim()] = s;
-		});
-
-		var badges = document.querySelectorAll('.pxd-health-badge[data-health-badge]');
-		badges.forEach(function (b) {
-			var name = String(b.getAttribute('data-health-badge')).toLowerCase().trim();
-			var match = serviceMap[name];
-			if (match) {
-				var isOnline = (match.status === 'online');
-				b.className = 'pxd-health-badge ' + (isOnline ? 'pxd-health-badge--online' : 'pxd-health-badge--offline');
-				var lbl = b.querySelector('.pxd-health-label');
-				if (lbl) {
-					lbl.textContent = isOnline ? ('Online' + (match.latency_ms ? ' (' + match.latency_ms + ' ms)' : '')) : 'Offline';
-				}
-			}
-		});
-	}
-
-	// 8. Preenchimento das Tabelas Técnicas
-	function renderTechnicalTables(nodes, storages) {
-		var nodesBody = el('pxd-nodes-body');
-		if (nodesBody && Array.isArray(nodes) && nodes.length) {
-			setText('pxd-count-nodes', nodes.length + ' nodes');
-			nodesBody.innerHTML = nodes.map(function (n) {
-				var cpu = (Number(n.cpu) || 0) * 100;
-				return '<tr>' +
-					'<td><strong>' + esc(n.node) + '</strong></td>' +
-					'<td><span class="tag ' + (n.status === 'online' ? 'ip' : 'url') + '">' + esc(n.status) + '</span></td>' +
-					'<td>' + cpu.toFixed(1) + '%</td>' +
-					'<td>' + fmtBytes(n.mem) + ' / ' + fmtBytes(n.maxmem) + '</td>' +
-					'<td>' + fmtBytes(n.disk) + ' / ' + fmtBytes(n.maxdisk) + '</td>' +
-					'<td>' + esc(n.uptime ? Math.round(n.uptime / 3600) + 'h' : '–') + '</td>' +
-				'</tr>';
-			}).join('');
-		}
-
-		var storageBody = el('pxd-storage-body');
-		if (storageBody && Array.isArray(storages) && storages.length) {
-			setText('pxd-count-storage-tab', storages.length + ' storages');
-			storageBody.innerHTML = storages.map(function (s) {
-				return '<tr>' +
-					'<td><strong>' + esc(s.storage) + '</strong></td>' +
-					'<td><code>' + esc(s.type) + '</code></td>' +
-					'<td><span class="tag ' + (s.status === 'available' || s.status === 'active' ? 'ip' : 'lxc') + '">' + esc(s.status) + '</span></td>' +
-					'<td>' + fmtBytes(s.total) + '</td>' +
-					'<td>' + fmtBytes(s.used) + ' (' + (s.percent || 0) + '%)</td>' +
-					'<td>' + fmtBytes(s.free) + '</td>' +
-				'</tr>';
-			}).join('');
-		}
-	}
-
-	// 9. Ciclo Principal de Polling
-	function pollAll() {
-		var statusDot = el('pxd-status-dot');
-		var statusText = el('pxd-status-text');
-		var versionBadge = el('pxd-version');
-		var lastUpdate = el('pxd-last-update');
-
-		// 1) Status geral
-		fetchJson('status').then(function (status) {
-			if (statusDot) {
-				statusDot.className = 'pxd-dot pxd-dot--ok';
-			}
-			if (statusText) statusText.textContent = (cfg.i18n && cfg.i18n.connected) || 'Proxmox Conectado';
-			if (versionBadge && status.version) {
-				versionBadge.textContent = 'PVE ' + status.version;
-			}
-			if (lastUpdate) {
-				var now = new Date();
-				lastUpdate.textContent = 'Atualizado às ' + now.toLocaleTimeString('pt-BR');
-			}
-			renderGauges(status);
-		}).catch(function (err) {
-			if (statusDot) statusDot.className = 'pxd-dot pxd-dot--error';
-			if (statusText) statusText.textContent = (err && err.status === 401) ? 'Erro de Autenticação (401)' : 'Erro de Conexão';
-		});
-
-		// 2) VMs & LXC
-		Promise.all([
-			fetchJson('vms').catch(function () { return []; }),
-			fetchJson('lxc').catch(function () { return []; }),
-		]).then(function (results) {
-			updateContainerCards(results[0], results[1]);
-		});
-
-		// 3) Health-Check dos serviços Docker
-		fetchJson('services').then(function (services) {
-			updateDockerHealth(services);
-		}).catch(function () {});
-
-		// 4) Nodes & Storage (para tabelas técnicas)
-		Promise.all([
-			fetchJson('nodes').catch(function () { return []; }),
-			fetchJson('storage').catch(function () { return []; }),
-		]).then(function (results) {
-			renderTechnicalTables(results[0], results[1]);
-		});
-	}
-
-	// Inicialização
-	document.addEventListener('DOMContentLoaded', function () {
-		initClipboard();
-		initViewToggle();
-		initKioskAndFullscreen();
-
-		pollAll();
-		if (intervalMs > 0) {
-			pollTimer = setInterval(pollAll, intervalMs);
-		}
-	});
-
+    if (cfg.isConfigured) {
+      refresh();
+      if (refreshMs > 0) setInterval(refresh, refreshMs);
+    } else {
+      setMeta('metrics-meta', 'AGUARDANDO CONFIGURAÇÃO');
+      setMeta('storage-meta', 'AGUARDANDO CONFIGURAÇÃO');
+      ['table-nodes','table-vms','table-lxc','table-storage'].forEach(id => {
+        const tb = document.querySelector(`#${id} tbody`);
+        const cols = tb?.parentElement?.querySelectorAll('thead th').length || 8;
+        if (tb) tb.innerHTML = `<tr><td colspan="${cols}" class="pvd-empty">Configure a API do Proxmox no painel administrativo para ver dados dinâmicos.</td></tr>`;
+      });
+      const mg = document.getElementById('metricsGrid');
+      if (mg) mg.innerHTML = `
+        <div class="metric-card"><div class="metric-card__head"><span class="metric-card__label">CPU</span><span class="metric-card__value">--</span></div><div class="metric-bar"><div class="metric-bar__fill metric-bar__fill--cpu" style="width:0%"></div></div><div class="metric-card__sub">Aguardando API</div></div>
+        <div class="metric-card"><div class="metric-card__head"><span class="metric-card__label">Memória RAM</span><span class="metric-card__value">--</span></div><div class="metric-bar"><div class="metric-bar__fill metric-bar__fill--ram" style="width:0%"></div></div><div class="metric-card__sub">Aguardando API</div></div>
+        <div class="metric-card"><div class="metric-card__head"><span class="metric-card__label">Armazenamento</span><span class="metric-card__value">--</span></div><div class="metric-bar"><div class="metric-bar__fill metric-bar__fill--disk" style="width:0%"></div></div><div class="metric-card__sub">Aguardando API</div></div>
+        <div class="metric-card"><div class="metric-card__head"><span class="metric-card__label">Nodes</span><span class="metric-card__value">--</span></div><div class="metric-bar"><div class="metric-bar__fill metric-bar__fill--nodes" style="width:0%"></div></div><div class="metric-card__sub">Aguardando API</div></div>`;
+      renderStorage([]); // will use custom or empty
+    }
+  });
 })();

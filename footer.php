@@ -1,15 +1,19 @@
 <?php
 /**
- * Footer do tema Proxmox Dashboard.
+ * Footer template.
  *
- * @package Proxmox_Dashboard
+ * @package Proxmox_VE_Dashboard
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 ?>
-</div><!-- /#proxmox-dashboard-page -->
+	<footer class="site-footer">
+		<span><?php echo esc_html( pvd_get_option( 'footer_text', 'Mapa da infraestrutura • Homelab' ) ); ?></span>
+		<span id="clock"></span>
+	</footer>
+</main>
 <?php wp_footer(); ?>
 </body>
 </html>
